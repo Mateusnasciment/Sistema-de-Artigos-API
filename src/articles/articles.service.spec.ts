@@ -1,10 +1,25 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ArticlesService } from './articles.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotFoundException, ForbiddenException } from '@nestjs/common';
 
 describe('ArticlesService', () => {
   let service: ArticlesService;
   let prismaMock: any;
+
+  const mockArticle = {
+    id: 1,
+    title: 'Test Article',
+    content: 'This is a test article',
+    authorId: 1,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    author: {
+      id: 1,
+      name: 'Test User',
+      email: 'test@example.com',
+    },
+  };
 
   beforeEach(async () => {
     prismaMock = {
@@ -35,60 +50,72 @@ describe('ArticlesService', () => {
   });
 
   describe('create', () => {
-    it('should create a new article', async () => {
+    it('should create a new article with author', async () => {
+      const createArticleDto = {
+        title: 'New Article',
+        content: 'New content',
+      };
+      const authorId = 1;
+
+      prismaMock.article.create.mockResolvedValue(mockArticle);
+
+      const result = await service.create(createArticleDto, authorId);
+
+      expect(result).toEqual(mockArticle);
+      expect(prismaMock.article.create).toHaveBeenCalledWith({
+        data: {
+          title: createArticleDto.title,
+          content: createArticleDto.content,
+          authorId,
+        },
+        include: {
+          author: {
+            select: { id: true, name: true, email: true },
+          },
+        },
+      });
+    });
+
+    it('should create article with different author', async () => {
+      const createArticleDto = {
+        title: 'Another Article',
+        content: 'Another content',
+      };
+      const authorId = 2;
+
+      const mockArticle2 = { ...mockArticle, authorId: 2, id: 2 };
+      prismaMock.article.create.mockResolvedValue(mockArticle2);
+
+      const result = await service.create(createArticleDto, authorId);
+
+      expect(result.authorId).toBe(2);
+      expect(prismaMock.article.create).toHaveBeenCalled();
+    });
+
+    it('should include author info in response', async () => {
       const createArticleDto = {
         title: 'Test Article',
-        content: 'This is a test article',
-        authorId: '1',
+        content: 'Content',
       };
 
-      const expectedArticle = {
-        id: '1',
-        title: 'Test Article',
-        content: 'This is a test article',
-        authorId: '1',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      prismaMock.article.create.mockResolvedValue(mockArticle);
 
-      prismaMock.article.create.mockResolvedValue(expectedArticle);
+      const result = await service.create(createArticleDto, 1);
 
-      const result = await service.create(createArticleDto);
-
-      expect(result).toEqual(expectedArticle);
-      expect(prismaMock.article.create).toHaveBeenCalledWith({
-        data: createArticleDto,
-      });
+      expect(result.author).toBeDefined();
+      expect(result.author.name).toBe('Test User');
     });
   });
 
   describe('findAll', () => {
     it('should return an array of articles', async () => {
-      const articles = [
-        {
-          id: '1',
-          title: 'Article 1',
-          content: 'Content 1',
-          authorId: '1',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        {
-          id: '2',
-          title: 'Article 2',
-          content: 'Content 2',
-          authorId: '2',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      ];
-
+      const articles = [mockArticle, { ...mockArticle, id: 2 }];
       prismaMock.article.findMany.mockResolvedValue(articles);
 
       const result = await service.findAll();
 
       expect(result).toEqual(articles);
-      expect(prismaMock.article.findMany).toHaveBeenCalled();
+      expect(result.length).toBe(2);
     });
 
     it('should return empty array if no articles exist', async () => {
@@ -97,86 +124,213 @@ describe('ArticlesService', () => {
       const result = await service.findAll();
 
       expect(result).toEqual([]);
+      expect(result.length).toBe(0);
+    });
+
+    it('should order articles by creation date descending', async () => {
+      const articles = [mockArticle];
+      prismaMock.article.findMany.mockResolvedValue(articles);
+
+      await service.findAll();
+
+      expect(prismaMock.article.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { createdAt: 'desc' },
+        })
+      );
+    });
+
+    it('should include author info for all articles', async () => {
+      const articles = [mockArticle];
+      prismaMock.article.findMany.mockResolvedValue(articles);
+
+      const result = await service.findAll();
+
+      expect(result[0].author).toBeDefined();
     });
   });
 
   describe('findOne', () => {
     it('should return an article by id', async () => {
-      const article = {
-        id: '1',
-        title: 'Test Article',
-        content: 'This is a test article',
-        authorId: '1',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
 
-      prismaMock.article.findUnique.mockResolvedValue(article);
+      const result = await service.findOne(1);
 
-      const result = await service.findOne('1');
-
-      expect(result).toEqual(article);
+      expect(result).toEqual(mockArticle);
       expect(prismaMock.article.findUnique).toHaveBeenCalledWith({
-        where: { id: '1' },
+        where: { id: 1 },
+        include: {
+          author: {
+            select: { id: true, name: true, email: true },
+          },
+        },
       });
     });
 
-    it('should return null if article not found', async () => {
+    it('should throw NotFoundException if article not found', async () => {
       prismaMock.article.findUnique.mockResolvedValue(null);
 
-      const result = await service.findOne('nonexistent');
+      await expect(service.findOne(999)).rejects.toThrow(NotFoundException);
+    });
 
-      expect(result).toBeNull();
+    it('should find article by different id', async () => {
+      const mockArticle2 = { ...mockArticle, id: 5 };
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle2);
+
+      const result = await service.findOne(5);
+
+      expect(result.id).toBe(5);
+    });
+
+    it('should include author with select fields', async () => {
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+
+      const result = await service.findOne(1);
+
+      expect(result.author).toHaveProperty('id');
+      expect(result.author).toHaveProperty('name');
+      expect(result.author).toHaveProperty('email');
     });
   });
 
   describe('update', () => {
-    it('should update an article', async () => {
+    it('should update article if user is author', async () => {
       const updateArticleDto = {
         title: 'Updated Title',
         content: 'Updated Content',
       };
 
-      const updatedArticle = {
-        id: '1',
-        title: 'Updated Title',
-        content: 'Updated Content',
-        authorId: '1',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+      const updatedArticle = { ...mockArticle, ...updateArticleDto };
       prismaMock.article.update.mockResolvedValue(updatedArticle);
 
-      const result = await service.update('1', updateArticleDto);
+      const result = await service.update(1, updateArticleDto, 1, 'editor');
 
       expect(result).toEqual(updatedArticle);
-      expect(prismaMock.article.update).toHaveBeenCalledWith({
-        where: { id: '1' },
-        data: updateArticleDto,
-      });
+      expect(prismaMock.article.update).toHaveBeenCalled();
+    });
+
+    it('should update article if user is admin', async () => {
+      const updateArticleDto = {
+        title: 'Updated by Admin',
+        content: 'Admin update',
+      };
+
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+      const updatedArticle = { ...mockArticle, ...updateArticleDto };
+      prismaMock.article.update.mockResolvedValue(updatedArticle);
+
+      const result = await service.update(1, updateArticleDto, 2, 'admin');
+
+      expect(result).toEqual(updatedArticle);
+    });
+
+    it('should throw ForbiddenException if user is not author or admin', async () => {
+      const updateArticleDto = {
+        title: 'Updated Title',
+        content: 'Updated Content',
+      };
+
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+
+      await expect(service.update(1, updateArticleDto, 2, 'editor')).rejects.toThrow(
+        ForbiddenException
+      );
+    });
+
+    it('should throw NotFoundException if article does not exist', async () => {
+      const updateArticleDto = {
+        title: 'Updated Title',
+        content: 'Updated Content',
+      };
+
+      prismaMock.article.findUnique.mockResolvedValue(null);
+
+      await expect(service.update(999, updateArticleDto, 1, 'admin')).rejects.toThrow(
+        NotFoundException
+      );
+    });
+
+    it('should verify article exists before updating', async () => {
+      const updateArticleDto = { title: 'New Title' };
+
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+      prismaMock.article.update.mockResolvedValue(mockArticle);
+
+      await service.update(1, updateArticleDto, 1, 'editor');
+
+      expect(prismaMock.article.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
+    });
+
+    it('should only update title and content fields', async () => {
+      const updateArticleDto = {
+        title: 'New Title',
+        content: 'New Content',
+      };
+
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+      prismaMock.article.update.mockResolvedValue(mockArticle);
+
+      await service.update(1, updateArticleDto, 1, 'admin');
+
+      expect(prismaMock.article.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            title: updateArticleDto.title,
+            content: updateArticleDto.content,
+          },
+        })
+      );
     });
   });
 
   describe('remove', () => {
-    it('should delete an article', async () => {
-      const article = {
-        id: '1',
-        title: 'Test Article',
-        content: 'This is a test article',
-        authorId: '1',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+    it('should delete article if user is author', async () => {
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+      prismaMock.article.delete.mockResolvedValue(mockArticle);
 
-      prismaMock.article.delete.mockResolvedValue(article);
+      const result = await service.remove(1, 1, 'editor');
 
-      const result = await service.remove('1');
-
-      expect(result).toEqual(article);
-      expect(prismaMock.article.delete).toHaveBeenCalledWith({
-        where: { id: '1' },
-      });
+      expect(result).toEqual({ message: 'Artigo removido com sucesso' });
+      expect(prismaMock.article.delete).toHaveBeenCalled();
     });
+
+    it('should delete article if user is admin', async () => {
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+      prismaMock.article.delete.mockResolvedValue(mockArticle);
+
+      const result = await service.remove(1, 2, 'admin');
+
+      expect(result).toEqual({ message: 'Artigo removido com sucesso' });
+    });
+
+    it('should throw ForbiddenException if user is not author or admin', async () => {
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+
+      await expect(service.remove(1, 2, 'reader')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should throw NotFoundException if article does not exist', async () => {
+      prismaMock.article.findUnique.mockResolvedValue(null);
+
+      await expect(service.remove(999, 1, 'admin')).rejects.toThrow(NotFoundException);
+    });
+
+    it('should check permissions before deleting', async () => {
+      prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+      prismaMock.article.delete.mockResolvedValue(mockArticle);
+
+      await service.remove(1, 1, 'editor');
+
+      expect(prismaMock.article.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
+    });
+
+      it('should not delete if user is reader', async () => {
+        prismaMock.article.findUnique.mockResolvedValue(mockArticle);
+
+        // User 2 is a reader trying to delete an article written by user 1
+        await expect(service.remove(1, 2, 'reader')).rejects.toThrow(ForbiddenException);
+        expect(prismaMock.article.delete).not.toHaveBeenCalled();
+      });
   });
 });
