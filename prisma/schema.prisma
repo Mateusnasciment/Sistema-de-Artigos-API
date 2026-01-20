@@ -46,3 +46,50 @@ model Article {
 
   @@map("articles")
 }
+
+model Product {
+  id              Int      @id @default(autoincrement())
+  name            String   @db.VarChar(255)
+  category        String   @db.VarChar(128)
+  description     String?  @db.Text
+  price           Decimal  @db.Decimal(10, 2)
+  imageUrl        String?  @db.Text
+  stockQuantity   Int      @default(0)
+  orderItems      OrderItem[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([category])
+  @@index([price])
+  @@index([name])
+  @@map("products")
+}
+
+model Order {
+  id              Int      @id @default(autoincrement())
+  status          String   @default("Pendente") // Pendente, Concluído, Cancelado
+  totalPrice      Decimal  @db.Decimal(10, 2)
+  items           OrderItem[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id              Int      @id @default(autoincrement())
+  orderId         Int
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId       Int
+  product         Product  @relation(fields: [productId], references: [id])
+  quantity        Int
+  priceAtPurchase Decimal  @db.Decimal(10, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([orderId, productId])
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}

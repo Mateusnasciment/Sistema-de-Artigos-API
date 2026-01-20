@@ -19,4 +19,6 @@ echo "Executando seed..."
 npx ts-node prisma/seed.ts || echo "Seed já executado ou erro ao executar"
 
 echo "Iniciando aplicação..."
+node dist/src/main.js
+echo "Iniciando aplicação..."
 node dist/src/main
